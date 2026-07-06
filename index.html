@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>ねこかくれんぼパズル</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: "Hiragino Maru Gothic ProN", "Yu Gothic", sans-serif; }
+  #board { display: grid; background: #fbcfe8; border-radius: 0.75rem; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.12); touch-action: manipulation; }
+  .cq-cell { box-sizing: border-box; line-height: 1; transition: background-color .15s; position: relative; }
+  .cq-cell:active { filter: brightness(0.92); }
+  @keyframes cqShake {
+    10%,90% { transform: translateX(-2px); }
+    20%,80% { transform: translateX(3px); }
+    30%,50%,70% { transform: translateX(-5px); }
+    40%,60% { transform: translateX(5px); }
+  }
+  .cq-shake { animation: cqShake .4s; position: relative; z-index: 2; }
+  @keyframes cqPop {
+    0% { transform: scale(0.3) rotate(0deg); opacity: 0.4; }
+    50% { transform: scale(1.25) rotate(-8deg); opacity: 1; }
+    75% { transform: scale(0.92) rotate(4deg); }
+    100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  }
+  .cq-pop { animation: cqPop .4s ease-out; }
+  @keyframes cqFadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+  .cq-fadein { animation: cqFadeIn .25s ease-out; }
+  @keyframes cqIdle {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-8%) rotate(-4deg); }
+  }
+  .cq-glyph { display: inline-block; }
+  .cq-cat-idle { animation: cqIdle 2.4s ease-in-out infinite; }
+  .cq-mark { color: rgba(190,24,93,0.4); font-weight: 700; }
+</style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-orange-50 via-pink-50 to-yellow-50 text-gray-800">
+
+<div id="app" class="min-h-screen flex flex-col items-center gap-4 p-4">
+
+  <header class="w-full max-w-lg flex items-center justify-between pt-2">
+    <h1 class="text-xl sm:text-2xl font-bold text-pink-600 flex items-center gap-1">🐱 ねこかくれんぼパズル</h1>
+    <button id="muteBtn" class="text-xl px-2 py-1 rounded-lg bg-white/70 shadow hover:bg-white">🔊</button>
+  </header>
+
+  <div class="w-full max-w-lg flex items-center justify-between text-sm font-medium">
+    <span id="stageLabel">ステージ 1 / 5</span>
+    <span id="livesLabel" class="text-lg tracking-wide">❤️❤️❤️</span>
+    <span id="catCountLabel">🐱 0 / 5</span>
+    <button id="resetBtn" class="px-3 py-1 rounded-lg bg-white/70 shadow hover:bg-white text-sm">リセット</button>
+  </div>
+
+  <div id="boardWrap" class="relative w-full max-w-lg" style="max-width:480px;">
+    <div id="board"></div>
+    <div id="clearOverlay" class="hidden absolute inset-0 rounded-xl bg-black/50 flex items-center justify-center">
+      <div class="cq-fadein bg-white rounded-xl p-6 text-center shadow-xl mx-4">
+        <p id="clearTitle" class="text-2xl font-bold text-pink-600 mb-2">ステージクリア!</p>
+        <p id="clearDesc" class="text-sm text-gray-600 mb-4">すべてのねこを見つけたにゃ!</p>
+        <button id="clearNextBtn" class="px-5 py-2 rounded-lg bg-pink-500 text-white font-bold shadow hover:bg-pink-600">次のステージへ</button>
+      </div>
+    </div>
+    <div id="gameOverOverlay" class="hidden absolute inset-0 rounded-xl bg-black/50 flex items-center justify-center">
+      <div class="cq-fadein bg-white rounded-xl p-6 text-center shadow-xl mx-4">
+        <p class="text-2xl font-bold text-red-500 mb-2">😿 ゲームオーバー</p>
+        <p class="text-sm text-gray-600 mb-4">3回間違えちゃったにゃ…新しい盤面でリトライしよう!</p>
+        <button id="gameOverRetryBtn" class="px-5 py-2 rounded-lg bg-pink-500 text-white font-bold shadow hover:bg-pink-600">もう一度挑戦</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="w-full max-w-lg bg-white/70 rounded-lg p-3 text-sm leading-relaxed">
+    <p class="font-bold mb-1">遊び方</p>
+    <ul class="list-disc list-inside space-y-0.5 text-gray-700">
+      <li>各行・各列にねこは1匹だけ</li>
+      <li>同じ色のエリアにねこは1匹だけ</li>
+      <li>ねこ同士は上下左右・ななめに隣り合えない</li>
+      <li>クリックで「空欄 → ✕(いないメモ) → ねこ」の順に切り替わります</li>
+      <li>間違った場所にねこを置くとライフが1減ります。3回間違えるとゲームオーバー(そのステージを新しい盤面でリトライ)</li>
+    </ul>
+  </div>
+
+  <div id="startOverlay" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+    <div class="cq-fadein bg-white rounded-xl p-6 max-w-sm text-center shadow-xl">
+      <p class="text-2xl font-bold text-pink-600 mb-2">🐱 ねこかくれんぼパズル</p>
+      <p class="text-sm text-gray-600 mb-4 leading-relaxed text-left">
+        碁盤の目に色分けされたマスがあり、それぞれの色の中に1匹だけねこが隠れています。<br><br>
+        ・各行・各列に1匹<br>
+        ・各色に1匹<br>
+        ・ねこ同士は隣り合わせ（ななめ含む）NG<br>
+        ・ライフは3つ。間違えると1つ減り、0になるとゲームオーバー<br><br>
+        数独やマインスイーパのように、色のヒントから隠れ場所を推理しよう。全5ステージ！
+      </p>
+      <button id="startBtn" class="px-6 py-2 rounded-lg bg-pink-500 text-white font-bold shadow hover:bg-pink-600">はじめる</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ═══════════════════════════════
+  // CONFIG
+  // ═══════════════════════════════
+  const STAGE_SIZES = [5, 6, 7, 8, 9];
+  const PALETTE = ['#f87171','#fb923c','#fbbf24','#a3e635','#34d399','#22d3ee','#60a5fa','#a78bfa','#f472b6'];
+  const STORAGE_STAGE = 'catqueens_stage';
+  const STORAGE_MUTE = 'catqueens_muted';
+  const MAX_LIVES = 3;
+  const CELL_GAP = 4;
+
+  // ═══════════════════════════════
+  // STATE
+  // ═══════════════════════════════
+  const state = {
+    stageIndex: 0,
+    size: 0,
+    colorGrid: null,
+    colors: null,
+    board: null,
+    catCount: 0,
+    cellEls: null,
+    lives: MAX_LIVES,
+    gameOver: false,
+  };
+  let muted = localStorage.getItem(STORAGE_MUTE) === '1';
+
+  // ═══════════════════════════════
+  // DOM REFS
+  // ═══════════════════════════════
+  const boardEl = document.getElementById('board');
+  const boardWrapEl = document.getElementById('boardWrap');
+  const stageLabelEl = document.getElementById('stageLabel');
+  const catCountLabelEl = document.getElementById('catCountLabel');
+  const livesLabelEl = document.getElementById('livesLabel');
+  const resetBtn = document.getElementById('resetBtn');
+  const muteBtn = document.getElementById('muteBtn');
+  const clearOverlay = document.getElementById('clearOverlay');
+  const clearTitle = document.getElementById('clearTitle');
+  const clearDesc = document.getElementById('clearDesc');
+  const clearNextBtn = document.getElementById('clearNextBtn');
+  const gameOverOverlay = document.getElementById('gameOverOverlay');
+  const gameOverRetryBtn = document.getElementById('gameOverRetryBtn');
+  const startOverlay = document.getElementById('startOverlay');
+  const startBtn = document.getElementById('startBtn');
+
+  // ═══════════════════════════════
+  // UTIL
+  // ═══════════════════════════════
+  function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  // ═══════════════════════════════
+  // PUZZLE GENERATION
+  // ═══════════════════════════════
+  // ねこの正解配置(1行1列に1匹)をランダム生成。隣接行の列差が2以上になるようにする。
+  function randomPermutation(n) {
+    const perm = new Array(n).fill(-1);
+    const usedCols = new Array(n).fill(false);
+    function backtrack(row) {
+      if (row === n) return true;
+      const order = shuffle([...Array(n).keys()]);
+      for (const col of order) {
+        if (usedCols[col]) continue;
+        if (row > 0 && Math.abs(perm[row - 1] - col) < 2) continue;
+        perm[row] = col;
+        usedCols[col] = true;
+        if (backtrack(row + 1)) return true;
+        usedCols[col] = false;
+        perm[row] = -1;
+      }
+      return false;
+    }
+    return backtrack(0) ? perm : null;
+  }
+
+  // 正解のねこマスを種にして、ランダムな連結領域(色)を盤面全体に広げる
+  function growRegions(n, perm) {
+    const colorOf = Array.from({ length: n }, () => new Array(n).fill(-1));
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    let frontier = [];
+    for (let region = 0; region < n; region++) {
+      const r = region, c = perm[region];
+      colorOf[r][c] = region;
+      for (const [dr, dc] of dirs) {
+        const nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nr < n && nc >= 0 && nc < n) frontier.push({ region, r: nr, c: nc });
+      }
+    }
+    let unassigned = n * n - n;
+    while (unassigned > 0 && frontier.length > 0) {
+      const idx = Math.floor(Math.random() * frontier.length);
+      const { region, r, c } = frontier[idx];
+      frontier.splice(idx, 1);
+      if (colorOf[r][c] !== -1) continue;
+      colorOf[r][c] = region;
+      unassigned--;
+      for (const [dr, dc] of dirs) {
+        const nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nr < n && nc >= 0 && nc < n && colorOf[nr][nc] === -1) {
+          frontier.push({ region, r: nr, c: nc });
+        }
+      }
+    }
+    return colorOf;
+  }
+
+  // 正解(perm)以外の解が存在すればそれを1つ返す(ランダム順探索、なければ唯一解)
+  function solveDifferent(n, colorGrid, forbidden) {
+    const usedCols = new Array(n).fill(false);
+    const usedColors = new Array(n).fill(false);
+    const assign = new Array(n);
+    let found = null;
+    function eq(a, b) { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+    function backtrack(row, prevCol) {
+      if (found) return;
+      if (row === n) {
+        if (!eq(assign, forbidden)) found = assign.slice();
+        return;
+      }
+      const order = shuffle([...Array(n).keys()]);
+      for (const col of order) {
+        if (found) return;
+        if (usedCols[col]) continue;
+        if (prevCol !== -1 && Math.abs(prevCol - col) < 2) continue;
+        const color = colorGrid[row][col];
+        if (usedColors[color]) continue;
+        usedCols[col] = true; usedColors[color] = true; assign[row] = col;
+        backtrack(row + 1, col);
+        usedCols[col] = false; usedColors[color] = false;
+      }
+    }
+    backtrack(0, -1);
+    return found;
+  }
+
+  // 指定した色の領域が連結(1つのかたまり)かどうか
+  function isConnected(n, colorGrid, region) {
+    const cells = [];
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (colorGrid[r][c] === region) cells.push([r, c]);
+    if (cells.length === 0) return true;
+    const seen = new Set([`${cells[0][0]},${cells[0][1]}`]);
+    const stack = [cells[0]];
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    while (stack.length) {
+      const [cr, cc] = stack.pop();
+      for (const [dr, dc] of dirs) {
+        const nr = cr + dr, nc = cc + dc;
+        if (nr >= 0 && nr < n && nc >= 0 && nc < n && colorGrid[nr][nc] === region) {
+          const key = `${nr},${nc}`;
+          if (!seen.has(key)) { seen.add(key); stack.push([nr, nc]); }
+        }
+      }
+    }
+    return seen.size === cells.length;
+  }
+
+  // 唯一解になるまで、正解以外の解が使うマスの色を塗り替えて修復する
+  function repairToUnique(n, colorGrid, perm, maxRepairs) {
+    for (let iter = 0; iter < maxRepairs; iter++) {
+      const alt = solveDifferent(n, colorGrid, perm);
+      if (!alt) return true;
+      const diffRows = [];
+      for (let row = 0; row < n; row++) if (alt[row] !== perm[row]) diffRows.push(row);
+      let repaired = false;
+      for (const trow of shuffle(diffRows)) {
+        if (repaired) break;
+        const altCol = alt[trow];
+        const oldRegion = colorGrid[trow][altCol];
+        const others = diffRows.filter(rr => rr !== trow);
+        for (const row2 of shuffle(others)) {
+          if (repaired) break;
+          const colorX = colorGrid[row2][alt[row2]];
+          if (colorX === oldRegion) continue;
+          colorGrid[trow][altCol] = colorX;
+          if (isConnected(n, colorGrid, oldRegion) && isConnected(n, colorGrid, colorX)) {
+            repaired = true;
+          } else {
+            colorGrid[trow][altCol] = oldRegion;
+          }
+        }
+      }
+      if (!repaired) return false;
+    }
+    return false;
+  }
+
+  function generatePuzzle(n) {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const perm = randomPermutation(n);
+      if (!perm) continue;
+      for (let g = 0; g < 5; g++) {
+        const colorGrid = growRegions(n, perm);
+        if (repairToUnique(n, colorGrid, perm, 80)) return { colorGrid };
+      }
+    }
+    // 極めて稀なフォールバック(唯一解の保証なし)
+    const perm = randomPermutation(n);
+    return { colorGrid: growRegions(n, perm) };
+  }
+
+  // ═══════════════════════════════
+  // AUDIO
+  // ═══════════════════════════════
+  let _actx = null;
+  function ac() {
+    if (!_actx) _actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (_actx.state === 'suspended') _actx.resume();
+    return _actx;
+  }
+  let _noiseBuf = null;
+  function getNoise(ctx) {
+    if (_noiseBuf) return _noiseBuf;
+    const len = ctx.sampleRate;
+    _noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = _noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return _noiseBuf;
+  }
+
+  function sfx(type) {
+    if (muted) return;
+    try {
+      const ctx = ac();
+      const t = ctx.currentTime;
+      const dst = ctx.destination;
+      const O = (freq, shape, start, dur, vol, f2) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = shape || 'sine';
+        o.frequency.setValueAtTime(freq, start);
+        if (f2) o.frequency.exponentialRampToValueAtTime(f2, start + dur);
+        g.gain.setValueAtTime(vol, start);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        o.connect(g); g.connect(dst);
+        o.start(start); o.stop(start + dur + 0.02);
+      };
+      switch (type) {
+        case 'mark':
+          O(660, 'triangle', t, 0.05, 0.10);
+          break;
+        case 'place':
+          O(880, 'sine', t, 0.09, 0.22);
+          O(1320, 'sine', t + 0.04, 0.08, 0.12);
+          break;
+        case 'remove':
+          O(440, 'sine', t, 0.05, 0.10);
+          break;
+        case 'error':
+          O(180, 'square', t, 0.14, 0.26, 130);
+          O(180, 'square', t + 0.16, 0.14, 0.26, 130);
+          break;
+        case 'gameover':
+          O(392.0, 'sawtooth', t, 0.5, 0.28, 130);
+          O(329.63, 'sawtooth', t + 0.18, 0.5, 0.24, 100);
+          O(261.63, 'sawtooth', t + 0.36, 0.6, 0.24, 70);
+          break;
+        case 'clear':
+          [523.25, 659.25, 784.0, 1046.5].forEach((f, i) => O(f, 'triangle', t + i * 0.09, 0.22, 0.22));
+          break;
+        case 'allclear':
+          [523.25, 659.25, 784.0, 1046.5, 1318.5, 1568.0].forEach((f, i) => O(f, 'triangle', t + i * 0.1, 0.35, 0.24));
+          break;
+      }
+    } catch (e) {}
+  }
+
+  // 4つ打ちキック + バックビート + 繰り返しメロディで「ポップソング」らしいループにする
+  const LEAD_RIFF = [
+    659.25, 783.99, 880.00, 783.99, 659.25, 587.33, 523.25, null,
+    659.25, 783.99, 880.00, 1046.50, 880.00, 783.99, 659.25, null,
+  ];
+  const BGM = {
+    nodes: [], master: null, beatTimer: null, beat: 0, bpm: 132, active: false,
+    start() {
+      this.stop();
+      if (muted) return;
+      const ctx = ac();
+      this.active = true;
+      this.beat = 0;
+      this.master = ctx.createGain();
+      this.master.gain.setValueAtTime(0, ctx.currentTime);
+      this.master.gain.linearRampToValueAtTime(0.24, ctx.currentTime + 1.5);
+      this.master.connect(ctx.destination);
+      this._tick();
+    },
+    stop() {
+      this.active = false;
+      if (this.beatTimer) { clearTimeout(this.beatTimer); this.beatTimer = null; }
+      this.nodes.forEach(n => { try { n.stop(); } catch (e) {} });
+      this.nodes = [];
+      this.master = null;
+    },
+    setMute(m) {
+      if (m) this.stop();
+      else if (!this.active) this.start();
+    },
+    _tick() {
+      if (!this.active) return;
+      const ctx = ac();
+      const t = ctx.currentTime;
+      const beatSec = 60 / this.bpm;
+      this._kick(ctx, t);
+      if (this.beat % 4 === 0) this._bass(ctx, t);
+      if (this.beat % 2 === 1) { this._hat(ctx, t); this._snap(ctx, t); }
+      const chordProg = [
+        [261.63, 329.63, 392.00],
+        [392.00, 493.88, 587.33],
+        [220.00, 261.63, 329.63],
+        [349.23, 440.00, 523.25],
+      ];
+      if (this.beat % 4 === 0) this._chord(ctx, t, chordProg[Math.floor(this.beat / 4) % 4]);
+      const note = LEAD_RIFF[this.beat % LEAD_RIFF.length];
+      if (note) this._lead(ctx, t, note);
+      this.beat++;
+      this.beatTimer = setTimeout(() => this._tick(), beatSec * 1000);
+    },
+    _kick(ctx, t) {
+      if (!this.master) return;
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(150, t);
+      o.frequency.exponentialRampToValueAtTime(45, t + 0.14);
+      g.gain.setValueAtTime(0.4, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.connect(g); g.connect(this.master);
+      o.start(t); o.stop(t + 0.17);
+    },
+    _bass(ctx, t) {
+      if (!this.master) return;
+      const bassNotes = [130.81, 196.00, 110.00, 174.61];
+      const f = bassNotes[Math.floor(this.beat / 4) % 4];
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'triangle'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.14, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      o.connect(g); g.connect(this.master);
+      o.start(t); o.stop(t + 0.25);
+    },
+    _hat(ctx, t) {
+      if (!this.master) return;
+      const src = ctx.createBufferSource();
+      src.buffer = getNoise(ctx);
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.05, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+      src.connect(hp); hp.connect(g); g.connect(this.master);
+      src.start(t); src.stop(t + 0.06);
+    },
+    _snap(ctx, t) {
+      if (!this.master) return;
+      const src = ctx.createBufferSource();
+      src.buffer = getNoise(ctx);
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 0.7;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.14, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      src.connect(bp); bp.connect(g); g.connect(this.master);
+      src.start(t); src.stop(t + 0.1);
+    },
+    _chord(ctx, t, freqs) {
+      if (!this.master) return;
+      freqs.forEach(f => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'sine'; o.frequency.value = f;
+        g.gain.setValueAtTime(0.045, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+        o.connect(g); g.connect(this.master);
+        o.start(t); o.stop(t + 1.0);
+      });
+    },
+    _lead(ctx, t, freq) {
+      if (!this.master) return;
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'square'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.06, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      o.connect(g); g.connect(this.master);
+      o.start(t); o.stop(t + 0.24);
+    }
+  };
+
+  // ═══════════════════════════════
+  // GAME LOGIC
+  // ═══════════════════════════════
+  function initStage(index) {
+    state.stageIndex = index;
+    const n = STAGE_SIZES[index];
+    state.size = n;
+    state.lives = MAX_LIVES;
+    state.gameOver = false;
+    hideOverlay();
+    hideGameOver();
+    updateHud();
+    boardEl.innerHTML = '';
+    boardEl.style.gridTemplateColumns = '1fr';
+    const loading = document.createElement('div');
+    loading.className = 'flex items-center justify-center text-gray-400 text-base py-20';
+    loading.textContent = '🐱 パズルを生成中...';
+    boardEl.appendChild(loading);
+    // 生成前に「生成中」表示を描画させてから重い処理に入る
+    setTimeout(() => {
+      const puzzle = generatePuzzle(n);
+      state.colorGrid = puzzle.colorGrid;
+      state.colors = shuffle(PALETTE).slice(0, n);
+      state.board = Array.from({ length: n }, () => new Array(n).fill(0));
+      state.catCount = 0;
+      buildBoardDOM();
+      updateHud();
+      localStorage.setItem(STORAGE_STAGE, String(index));
+    }, 30);
+  }
+
+  function computeSizes(n) {
+    const boardWidthPx = boardWrapEl.clientWidth;
+    const cellPx = (boardWidthPx - CELL_GAP * (n - 1)) / n;
+    const catPx = Math.max(14, cellPx * 0.52);
+    const markPx = Math.max(10, cellPx * 0.3);
+    const radiusPx = Math.max(4, cellPx * 0.12);
+    return { cellPx, catPx, markPx, radiusPx };
+  }
+
+  function buildBoardDOM() {
+    const n = state.size;
+    boardEl.innerHTML = '';
+    boardEl.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+    boardEl.style.gap = `${CELL_GAP}px`;
+    state.sizes = computeSizes(n);
+    state.cellEls = Array.from({ length: n }, () => new Array(n));
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        const cell = document.createElement('div');
+        cell.className = 'cq-cell flex items-center justify-center select-none cursor-pointer';
+        const region = state.colorGrid[r][c];
+        cell.style.background = state.colors[region];
+        cell.style.aspectRatio = '1 / 1';
+        cell.style.borderRadius = `${state.sizes.radiusPx}px`;
+        cell.addEventListener('click', () => handleCellClick(r, c));
+        boardEl.appendChild(cell);
+        state.cellEls[r][c] = cell;
+      }
+    }
+    renderAllCells();
+  }
+
+  function renderAllCells() {
+    const n = state.size;
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) updateCellContent(r, c);
+    }
+  }
+
+  function updateCellContent(r, c) {
+    const cell = state.cellEls[r][c];
+    const v = state.board[r][c];
+    cell.innerHTML = '';
+    if (v === 1) {
+      const span = document.createElement('span');
+      span.className = 'cq-glyph cq-mark';
+      span.style.fontSize = `${state.sizes.markPx}px`;
+      span.textContent = '×';
+      cell.appendChild(span);
+    } else if (v === 2) {
+      const span = document.createElement('span');
+      span.className = 'cq-glyph cq-cat-idle';
+      span.style.fontSize = `${state.sizes.catPx}px`;
+      span.style.animationDelay = `-${(Math.random() * 2.4).toFixed(2)}s`;
+      span.textContent = '🐱';
+      cell.appendChild(span);
+    }
+  }
+
+  function findConflicts(r, c) {
+    const n = state.size;
+    const conflicts = [];
+    for (let rr = 0; rr < n; rr++) {
+      for (let cc = 0; cc < n; cc++) {
+        if (rr === r && cc === c) continue;
+        if (state.board[rr][cc] !== 2) continue;
+        const sameRow = rr === r;
+        const sameCol = cc === c;
+        const sameColor = state.colorGrid[rr][cc] === state.colorGrid[r][c];
+        const adjacent = Math.abs(rr - r) <= 1 && Math.abs(cc - c) <= 1;
+        if (sameRow || sameCol || sameColor || adjacent) conflicts.push([rr, cc]);
+      }
+    }
+    return conflicts;
+  }
+
+  function flashConflicts(cells) {
+    cells.forEach(([r, c]) => {
+      const el = state.cellEls[r][c];
+      el.classList.add('cq-shake');
+      el.style.boxShadow = 'inset 0 0 0 3px #ef4444';
+    });
+    setTimeout(() => {
+      cells.forEach(([r, c]) => {
+        const el = state.cellEls[r][c];
+        el.classList.remove('cq-shake');
+        el.style.boxShadow = '';
+      });
+    }, 450);
+  }
+
+  function handleCellClick(r, c) {
+    if (state.gameOver) return;
+    const cur = state.board[r][c];
+    if (cur === 2) {
+      state.board[r][c] = 0;
+      state.catCount--;
+      updateCellContent(r, c);
+      updateHud();
+      sfx('remove');
+      return;
+    }
+    if (cur === 0) {
+      state.board[r][c] = 1;
+      updateCellContent(r, c);
+      sfx('mark');
+      return;
+    }
+    // cur === 1: ねこを置こうとする
+    const conflicts = findConflicts(r, c);
+    if (conflicts.length > 0) {
+      flashConflicts([[r, c], ...conflicts]);
+      sfx('error');
+      state.lives--;
+      updateHud();
+      if (state.lives <= 0) {
+        state.gameOver = true;
+        setTimeout(() => { sfx('gameover'); showGameOver(); }, 500);
+      }
+      return;
+    }
+    state.board[r][c] = 2;
+    state.catCount++;
+    updateCellContent(r, c);
+    updateHud();
+    state.cellEls[r][c].classList.add('cq-pop');
+    setTimeout(() => state.cellEls[r][c].classList.remove('cq-pop'), 420);
+    sfx('place');
+    if (state.catCount === state.size) onStageClear();
+  }
+
+  function updateHud() {
+    stageLabelEl.textContent = `ステージ ${state.stageIndex + 1} / ${STAGE_SIZES.length}`;
+    catCountLabelEl.textContent = `🐱 ${state.catCount} / ${state.size}`;
+    livesLabelEl.textContent = '❤️'.repeat(Math.max(0, state.lives)) + '🤍'.repeat(MAX_LIVES - Math.max(0, state.lives));
+  }
+
+  function showGameOver() {
+    gameOverOverlay.classList.remove('hidden');
+  }
+
+  function hideGameOver() {
+    gameOverOverlay.classList.add('hidden');
+  }
+
+  gameOverRetryBtn.addEventListener('click', () => {
+    initStage(state.stageIndex);
+  });
+
+  function onStageClear() {
+    const isLast = state.stageIndex === STAGE_SIZES.length - 1;
+    sfx(isLast ? 'allclear' : 'clear');
+    if (isLast) {
+      clearTitle.textContent = '🎉 全ステージクリア!!';
+      clearDesc.textContent = '5面すべてのねこを見つけたにゃ!お見事!';
+      clearNextBtn.textContent = 'さいしょから';
+    } else {
+      clearTitle.textContent = 'ステージクリア!';
+      clearDesc.textContent = 'すべてのねこを見つけたにゃ!';
+      clearNextBtn.textContent = '次のステージへ';
+    }
+    clearOverlay.classList.remove('hidden');
+  }
+
+  function hideOverlay() {
+    clearOverlay.classList.add('hidden');
+  }
+
+  clearNextBtn.addEventListener('click', () => {
+    const isLast = state.stageIndex === STAGE_SIZES.length - 1;
+    initStage(isLast ? 0 : state.stageIndex + 1);
+  });
+
+  resetBtn.addEventListener('click', () => {
+    const n = state.size;
+    state.board = Array.from({ length: n }, () => new Array(n).fill(0));
+    state.catCount = 0;
+    renderAllCells();
+    updateHud();
+  });
+
+  muteBtn.addEventListener('click', () => {
+    muted = !muted;
+    localStorage.setItem(STORAGE_MUTE, muted ? '1' : '0');
+    muteBtn.textContent = muted ? '🔇' : '🔊';
+    BGM.setMute(muted);
+  });
+
+  startBtn.addEventListener('click', () => {
+    ac();
+    startOverlay.remove();
+    muteBtn.textContent = muted ? '🔇' : '🔊';
+    if (!muted) BGM.start();
+    const saved = parseInt(localStorage.getItem(STORAGE_STAGE), 10);
+    const startIndex = Number.isInteger(saved) && saved >= 0 && saved < STAGE_SIZES.length ? saved : 0;
+    initStage(startIndex);
+  });
+
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    if (!state.cellEls) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const n = state.size;
+      state.sizes = computeSizes(n);
+      for (let r = 0; r < n; r++) {
+        for (let c = 0; c < n; c++) {
+          state.cellEls[r][c].style.borderRadius = `${state.sizes.radiusPx}px`;
+          const span = state.cellEls[r][c].querySelector('.cq-glyph');
+          if (span) span.style.fontSize = `${span.classList.contains('cq-mark') ? state.sizes.markPx : state.sizes.catPx}px`;
+        }
+      }
+    }, 150);
+  });
+
+})();
+</script>
+</body>
+</html>
