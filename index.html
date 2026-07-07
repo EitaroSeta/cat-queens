@@ -32,7 +32,15 @@
   }
   .cq-glyph { display: inline-block; }
   .cq-cat-idle { animation: cqIdle 2.4s ease-in-out infinite; }
-  .cq-mark { color: rgba(190,24,93,0.4); font-weight: 700; }
+  .cq-mark {
+    color: #ffffff;
+    font-weight: 800;
+    text-shadow:
+      -1px -1px 0 #1f2937, 1px -1px 0 #1f2937,
+      -1px  1px 0 #1f2937, 1px  1px 0 #1f2937,
+       0px -1.4px 0 #1f2937, 0px 1.4px 0 #1f2937,
+      -1.4px 0px 0 #1f2937, 1.4px 0px 0 #1f2937;
+  }
 </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-orange-50 via-pink-50 to-yellow-50 text-gray-800">
@@ -41,11 +49,14 @@
 
   <header class="w-full max-w-lg flex items-center justify-between pt-2">
     <h1 class="text-xl sm:text-2xl font-bold text-pink-600 flex items-center gap-1">🐱 ねこかくれんぼパズル</h1>
-    <button id="muteBtn" class="text-xl px-2 py-1 rounded-lg bg-white/70 shadow hover:bg-white">🔊</button>
+    <div class="flex gap-2">
+      <button id="stageSelectBtn" class="text-xl px-2 py-1 rounded-lg bg-white/70 shadow hover:bg-white">📋</button>
+      <button id="muteBtn" class="text-xl px-2 py-1 rounded-lg bg-white/70 shadow hover:bg-white">🔊</button>
+    </div>
   </header>
 
   <div class="w-full max-w-lg flex items-center justify-between text-sm font-medium">
-    <span id="stageLabel">ステージ 1 / 5</span>
+    <span id="stageLabel">ステージ 1 / 8</span>
     <span id="livesLabel" class="text-lg tracking-wide">❤️❤️❤️</span>
     <span id="catCountLabel">🐱 0 / 5</span>
     <button id="resetBtn" class="px-3 py-1 rounded-lg bg-white/70 shadow hover:bg-white text-sm">リセット</button>
@@ -76,8 +87,17 @@
       <li>同じ色のエリアにねこは1匹だけ</li>
       <li>ねこ同士は上下左右・ななめに隣り合えない</li>
       <li>クリックで「空欄 → ✕(いないメモ) → ねこ」の順に切り替わります</li>
-      <li>間違った場所にねこを置くとライフが1減ります。3回間違えるとゲームオーバー(そのステージを新しい盤面でリトライ)</li>
+      <li>間違った場所にねこを置くとライフが1減ります。ライフが0になるとゲームオーバー(そのステージを新しい盤面でリトライ)。後半のステージほどライフが少なくなります</li>
+      <li>クリア済みのステージは📋ボタンからいつでも自由にリトライできます</li>
     </ul>
+  </div>
+
+  <div id="stageSelectOverlay" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-40 p-4">
+    <div class="cq-fadein bg-white rounded-xl p-6 max-w-sm w-full text-center shadow-xl">
+      <p class="text-xl font-bold text-pink-600 mb-3">ステージ選択</p>
+      <div id="stageSelectGrid" class="grid grid-cols-4 gap-2 mb-4"></div>
+      <button id="stageSelectCloseBtn" class="px-5 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold shadow hover:bg-gray-300">とじる</button>
+    </div>
   </div>
 
   <div id="startOverlay" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
@@ -88,8 +108,8 @@
         ・各行・各列に1匹<br>
         ・各色に1匹<br>
         ・ねこ同士は隣り合わせ（ななめ含む）NG<br>
-        ・ライフは3つ。間違えると1つ減り、0になるとゲームオーバー<br><br>
-        数独やマインスイーパのように、色のヒントから隠れ場所を推理しよう。全5ステージ！
+        ・ライフは3つ。間違えると1つ減り、0になるとゲームオーバー(後半のステージはライフが少なめ)<br><br>
+        数独やマインスイーパのように、色のヒントから隠れ場所を推理しよう。全8ステージ！
       </p>
       <button id="startBtn" class="px-6 py-2 rounded-lg bg-pink-500 text-white font-bold shadow hover:bg-pink-600">はじめる</button>
     </div>
@@ -104,10 +124,12 @@
   // ═══════════════════════════════
   // CONFIG
   // ═══════════════════════════════
-  const STAGE_SIZES = [5, 6, 7, 8, 9];
+  const STAGE_SIZES = [5, 6, 7, 8, 9, 9, 9, 9];
+  const STAGE_LIVES = [3, 3, 3, 3, 3, 2, 2, 1];
   const PALETTE = ['#f87171','#fb923c','#fbbf24','#a3e635','#34d399','#22d3ee','#60a5fa','#a78bfa','#f472b6'];
   const STORAGE_STAGE = 'catqueens_stage';
   const STORAGE_MUTE = 'catqueens_muted';
+  const STORAGE_CLEARED = 'catqueens_cleared';
   const MAX_LIVES = 3;
   const CELL_GAP = 4;
 
@@ -123,9 +145,24 @@
     catCount: 0,
     cellEls: null,
     lives: MAX_LIVES,
+    maxLives: MAX_LIVES,
     gameOver: false,
   };
   let muted = localStorage.getItem(STORAGE_MUTE) === '1';
+  let cleared = loadCleared();
+
+  function loadCleared() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_CLEARED));
+      if (Array.isArray(saved)) {
+        return STAGE_SIZES.map((_, i) => saved[i] === true);
+      }
+    } catch (e) {}
+    return STAGE_SIZES.map(() => false);
+  }
+  function saveCleared() {
+    localStorage.setItem(STORAGE_CLEARED, JSON.stringify(cleared));
+  }
 
   // ═══════════════════════════════
   // DOM REFS
@@ -143,6 +180,10 @@
   const clearNextBtn = document.getElementById('clearNextBtn');
   const gameOverOverlay = document.getElementById('gameOverOverlay');
   const gameOverRetryBtn = document.getElementById('gameOverRetryBtn');
+  const stageSelectBtn = document.getElementById('stageSelectBtn');
+  const stageSelectOverlay = document.getElementById('stageSelectOverlay');
+  const stageSelectGrid = document.getElementById('stageSelectGrid');
+  const stageSelectCloseBtn = document.getElementById('stageSelectCloseBtn');
   const startOverlay = document.getElementById('startOverlay');
   const startBtn = document.getElementById('startBtn');
 
@@ -496,7 +537,8 @@
     state.stageIndex = index;
     const n = STAGE_SIZES[index];
     state.size = n;
-    state.lives = MAX_LIVES;
+    state.maxLives = STAGE_LIVES[index];
+    state.lives = state.maxLives;
     state.gameOver = false;
     hideOverlay();
     hideGameOver();
@@ -654,7 +696,7 @@
   function updateHud() {
     stageLabelEl.textContent = `ステージ ${state.stageIndex + 1} / ${STAGE_SIZES.length}`;
     catCountLabelEl.textContent = `🐱 ${state.catCount} / ${state.size}`;
-    livesLabelEl.textContent = '❤️'.repeat(Math.max(0, state.lives)) + '🤍'.repeat(MAX_LIVES - Math.max(0, state.lives));
+    livesLabelEl.textContent = '❤️'.repeat(Math.max(0, state.lives)) + '🤍'.repeat(state.maxLives - Math.max(0, state.lives));
   }
 
   function showGameOver() {
@@ -671,10 +713,12 @@
 
   function onStageClear() {
     const isLast = state.stageIndex === STAGE_SIZES.length - 1;
+    cleared[state.stageIndex] = true;
+    saveCleared();
     sfx(isLast ? 'allclear' : 'clear');
     if (isLast) {
       clearTitle.textContent = '🎉 全ステージクリア!!';
-      clearDesc.textContent = '5面すべてのねこを見つけたにゃ!お見事!';
+      clearDesc.textContent = `${STAGE_SIZES.length}面すべてのねこを見つけたにゃ!お見事!`;
       clearNextBtn.textContent = 'さいしょから';
     } else {
       clearTitle.textContent = 'ステージクリア!';
@@ -691,6 +735,36 @@
   clearNextBtn.addEventListener('click', () => {
     const isLast = state.stageIndex === STAGE_SIZES.length - 1;
     initStage(isLast ? 0 : state.stageIndex + 1);
+  });
+
+  function renderStageSelect() {
+    stageSelectGrid.innerHTML = '';
+    STAGE_SIZES.forEach((n, i) => {
+      const unlocked = i === 0 || cleared[i - 1] || cleared[i];
+      const btn = document.createElement('button');
+      const isCurrent = i === state.stageIndex;
+      btn.className = 'relative rounded-lg py-2 text-sm font-bold shadow ' +
+        (unlocked ? (isCurrent ? 'bg-pink-500 text-white' : 'bg-white hover:bg-pink-50 text-gray-700') : 'bg-gray-100 text-gray-300 cursor-not-allowed');
+      btn.innerHTML = `${i + 1}<br><span class="text-[10px] font-normal">${n}×${n}</span>` + (cleared[i] ? '<span class="absolute -top-1 -right-1 text-xs">✅</span>' : '');
+      if (unlocked) {
+        btn.addEventListener('click', () => {
+          stageSelectOverlay.classList.add('hidden');
+          initStage(i);
+        });
+      } else {
+        btn.disabled = true;
+      }
+      stageSelectGrid.appendChild(btn);
+    });
+  }
+
+  stageSelectBtn.addEventListener('click', () => {
+    renderStageSelect();
+    stageSelectOverlay.classList.remove('hidden');
+  });
+
+  stageSelectCloseBtn.addEventListener('click', () => {
+    stageSelectOverlay.classList.add('hidden');
   });
 
   resetBtn.addEventListener('click', () => {
