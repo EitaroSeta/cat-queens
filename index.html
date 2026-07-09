@@ -41,6 +41,12 @@
        0px -1.4px 0 #1f2937, 0px 1.4px 0 #1f2937,
       -1.4px 0px 0 #1f2937, 1.4px 0px 0 #1f2937;
   }
+  @keyframes cqHintPulse {
+    0%, 100% { box-shadow: inset 0 0 0 3px #facc15; }
+    50% { box-shadow: inset 0 0 0 3px #fde047; }
+  }
+  .cq-hint-ring { animation: cqHintPulse 1s ease-in-out infinite; z-index: 2; }
+  .cq-hint-active #board { box-shadow: 0 0 0 4px #fde047, 0 10px 25px rgba(0,0,0,0.12); }
 </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-orange-50 via-pink-50 to-yellow-50 text-gray-800">
@@ -56,10 +62,14 @@
   </header>
 
   <div class="w-full max-w-lg flex items-center justify-between text-sm font-medium">
-    <span id="stageLabel">ステージ 1 / 8</span>
+    <span id="stageLabel">ステージ 1 / 150</span>
     <span id="livesLabel" class="text-lg tracking-wide">❤️❤️❤️</span>
     <span id="catCountLabel">🐱 0 / 5</span>
-    <button id="resetBtn" class="px-3 py-1 rounded-lg bg-white/70 shadow hover:bg-white text-sm">リセット</button>
+  </div>
+
+  <div class="w-full max-w-lg flex items-center justify-between gap-2">
+    <button id="hintBtn" class="flex-1 px-3 py-1.5 rounded-lg bg-yellow-100 hover:bg-yellow-200 shadow text-sm font-bold text-yellow-800 flex items-center justify-center gap-1">💡 ヒント <span id="hintCountLabel">5</span></button>
+    <button id="resetBtn" class="px-3 py-1.5 rounded-lg bg-white/70 shadow hover:bg-white text-sm">リセット</button>
   </div>
 
   <div id="boardWrap" class="relative w-full max-w-lg" style="max-width:480px;">
@@ -80,6 +90,11 @@
     </div>
   </div>
 
+  <div id="hintPanel" class="hidden w-full max-w-lg bg-yellow-50 border-2 border-yellow-300 rounded-lg p-3 text-sm text-gray-800 shadow flex items-start gap-2 cq-fadein">
+    <span id="hintPanelText" class="flex-1 leading-relaxed"></span>
+    <button id="hintPanelCloseBtn" class="text-gray-400 hover:text-gray-600 font-bold px-1">×</button>
+  </div>
+
   <div class="w-full max-w-lg bg-white/70 rounded-lg p-3 text-sm leading-relaxed">
     <p class="font-bold mb-1">遊び方</p>
     <ul class="list-disc list-inside space-y-0.5 text-gray-700">
@@ -89,13 +104,14 @@
       <li>クリックで「空欄 → ✕(いないメモ) → ねこ」の順に切り替わります</li>
       <li>間違った場所にねこを置くとライフが1減ります。ライフが0になるとゲームオーバー(そのステージを新しい盤面でリトライ)。後半のステージほどライフが少なくなります</li>
       <li>クリア済みのステージは📋ボタンからいつでも自由にリトライできます</li>
+      <li>💡ヒントボタンを押してからマスをタップすると、そのマスに置ける/置けない理由を教えてくれます。ヒントは所持数制(ステージクリアで+1回復)です</li>
     </ul>
   </div>
 
   <div id="stageSelectOverlay" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-40 p-4">
     <div class="cq-fadein bg-white rounded-xl p-6 max-w-sm w-full text-center shadow-xl">
       <p class="text-xl font-bold text-pink-600 mb-3">ステージ選択</p>
-      <div id="stageSelectGrid" class="grid grid-cols-4 gap-2 mb-4"></div>
+      <div id="stageSelectGrid" class="grid grid-cols-4 gap-2 mb-4 max-h-80 overflow-y-auto pr-1"></div>
       <button id="stageSelectCloseBtn" class="px-5 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold shadow hover:bg-gray-300">とじる</button>
     </div>
   </div>
@@ -108,8 +124,9 @@
         ・各行・各列に1匹<br>
         ・各色に1匹<br>
         ・ねこ同士は隣り合わせ（ななめ含む）NG<br>
-        ・ライフは3つ。間違えると1つ減り、0になるとゲームオーバー(後半のステージはライフが少なめ)<br><br>
-        数独やマインスイーパのように、色のヒントから隠れ場所を推理しよう。全8ステージ！
+        ・ライフは3つ。間違えると1つ減り、0になるとゲームオーバー(後半のステージはライフが少なめ)<br>
+        ・💡ヒントで置ける/置けない理由を教えてもらえます(所持数制)<br><br>
+        数独やマインスイーパのように、色のヒントから隠れ場所を推理しよう。全150ステージ！
       </p>
       <button id="startBtn" class="px-6 py-2 rounded-lg bg-pink-500 text-white font-bold shadow hover:bg-pink-600">はじめる</button>
     </div>
@@ -124,14 +141,26 @@
   // ═══════════════════════════════
   // CONFIG
   // ═══════════════════════════════
-  const STAGE_SIZES = [5, 6, 7, 8, 9, 9, 9, 9];
-  const STAGE_LIVES = [3, 3, 3, 3, 3, 2, 2, 1];
-  const PALETTE = ['#f87171','#fb923c','#fbbf24','#a3e635','#34d399','#22d3ee','#60a5fa','#a78bfa','#f472b6'];
+  const TOTAL_LEVELS = 150;
+  const RAMP_SIZES = [5, 6, 7, 8, 9];
+  const FIXED_SIZE = 10; // 実機アプリに合わせて、ランプ後は10×10で固定
+  const STAGE_SIZES = RAMP_SIZES.concat(
+    Array.from({ length: TOTAL_LEVELS - RAMP_SIZES.length }, () => FIXED_SIZE)
+  );
+  function getMaxLives(index) {
+    if (index < 20) return 3;
+    if (index < 50) return 2;
+    return 1;
+  }
+  const PALETTE = ['#f87171','#fb923c','#fbbf24','#facc15','#a3e635','#34d399','#22d3ee','#60a5fa','#a78bfa','#f472b6'];
   const STORAGE_STAGE = 'catqueens_stage';
   const STORAGE_MUTE = 'catqueens_muted';
   const STORAGE_CLEARED = 'catqueens_cleared';
+  const STORAGE_HINTS = 'catqueens_hints';
   const MAX_LIVES = 3;
   const CELL_GAP = 4;
+  const HINT_START = 5;
+  const HINT_MAX = 9;
 
   // ═══════════════════════════════
   // STATE
@@ -147,9 +176,11 @@
     lives: MAX_LIVES,
     maxLives: MAX_LIVES,
     gameOver: false,
+    hintMode: false,
   };
   let muted = localStorage.getItem(STORAGE_MUTE) === '1';
   let cleared = loadCleared();
+  let hintTokens = loadHints();
 
   function loadCleared() {
     try {
@@ -162,6 +193,14 @@
   }
   function saveCleared() {
     localStorage.setItem(STORAGE_CLEARED, JSON.stringify(cleared));
+  }
+
+  function loadHints() {
+    const saved = parseInt(localStorage.getItem(STORAGE_HINTS), 10);
+    return Number.isInteger(saved) ? saved : HINT_START;
+  }
+  function saveHints() {
+    localStorage.setItem(STORAGE_HINTS, String(hintTokens));
   }
 
   // ═══════════════════════════════
@@ -184,6 +223,11 @@
   const stageSelectOverlay = document.getElementById('stageSelectOverlay');
   const stageSelectGrid = document.getElementById('stageSelectGrid');
   const stageSelectCloseBtn = document.getElementById('stageSelectCloseBtn');
+  const hintBtn = document.getElementById('hintBtn');
+  const hintCountLabel = document.getElementById('hintCountLabel');
+  const hintPanel = document.getElementById('hintPanel');
+  const hintPanelText = document.getElementById('hintPanelText');
+  const hintPanelCloseBtn = document.getElementById('hintPanelCloseBtn');
   const startOverlay = document.getElementById('startOverlay');
   const startBtn = document.getElementById('startBtn');
 
@@ -335,12 +379,12 @@
   }
 
   function generatePuzzle(n) {
-    for (let attempt = 0; attempt < 40; attempt++) {
+    for (let attempt = 0; attempt < 60; attempt++) {
       const perm = randomPermutation(n);
       if (!perm) continue;
-      for (let g = 0; g < 5; g++) {
+      for (let g = 0; g < 6; g++) {
         const colorGrid = growRegions(n, perm);
-        if (repairToUnique(n, colorGrid, perm, 80)) return { colorGrid };
+        if (repairToUnique(n, colorGrid, perm, 100)) return { colorGrid };
       }
     }
     // 極めて稀なフォールバック(唯一解の保証なし)
@@ -537,11 +581,13 @@
     state.stageIndex = index;
     const n = STAGE_SIZES[index];
     state.size = n;
-    state.maxLives = STAGE_LIVES[index];
+    state.maxLives = getMaxLives(index);
     state.lives = state.maxLives;
     state.gameOver = false;
+    state.hintMode = false;
     hideOverlay();
     hideGameOver();
+    hideHintPanel();
     updateHud();
     boardEl.innerHTML = '';
     boardEl.style.gridTemplateColumns = '1fr';
@@ -653,8 +699,154 @@
     }, 450);
   }
 
+  // ═══════════════════════════════
+  // HINT (推論エンジン)
+  // ═══════════════════════════════
+  // 今置かれているねこを根拠に、行・列・色・隣接ルールで置けないマスを洗い出す
+  function computeEliminated() {
+    const n = state.size;
+    const eliminated = Array.from({ length: n }, () => new Array(n).fill(null));
+    const cats = [];
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (state.board[r][c] === 2) cats.push([r, c]);
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (state.board[r][c] === 2) continue;
+        for (const [cr, cc] of cats) {
+          const sameRow = cr === r;
+          const sameCol = cc === c;
+          const sameColor = state.colorGrid[cr][cc] === state.colorGrid[r][c];
+          const adjacent = Math.abs(cr - r) <= 1 && Math.abs(cc - c) <= 1;
+          if (sameRow || sameCol || sameColor || adjacent) {
+            eliminated[r][c] = { r: cr, c: cc, sameRow, sameCol, sameColor, adjacent };
+            break;
+          }
+        }
+      }
+    }
+    return eliminated;
+  }
+
+  // 行・列・色ごとに、まだ置ける可能性が残っているマスの一覧を集計する
+  function computeGroupCandidates(eliminated) {
+    const n = state.size;
+    const rowCats = new Array(n).fill(false);
+    const colCats = new Array(n).fill(false);
+    const colorCats = new Array(n).fill(false);
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+      if (state.board[r][c] === 2) { rowCats[r] = true; colCats[c] = true; colorCats[state.colorGrid[r][c]] = true; }
+    }
+    const rowCands = Array.from({ length: n }, () => []);
+    const colCands = Array.from({ length: n }, () => []);
+    const colorCands = Array.from({ length: n }, () => []);
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (state.board[r][c] === 2 || eliminated[r][c]) continue;
+        const color = state.colorGrid[r][c];
+        if (!rowCats[r]) rowCands[r].push([r, c]);
+        if (!colCats[c]) colCands[c].push([r, c]);
+        if (!colorCats[color]) colorCands[color].push([r, c]);
+      }
+    }
+    return { rowCands, colCands, colorCands };
+  }
+
+  function getHint(r, c) {
+    if (state.board[r][c] === 2) {
+      return { text: 'ここにはもうねこがいるよ🐱', highlights: [[r, c]] };
+    }
+    const eliminated = computeEliminated();
+
+    if (eliminated[r][c]) {
+      const cause = eliminated[r][c];
+      let reason;
+      if (cause.adjacent) reason = '隣のマス(ななめ含む)にすでにねこがいるから、ここには置けないよ。ねこ同士は隣り合えないルールだよ。';
+      else if (cause.sameRow) reason = 'この行にはすでに別のねこがいるから、ここには置けないよ。1つの行にねこは1匹だけだよ。';
+      else if (cause.sameCol) reason = 'この列にはすでに別のねこがいるから、ここには置けないよ。1つの列にねこは1匹だけだよ。';
+      else reason = 'この色のエリアにはすでに別のねこがいるから、ここには置けないよ。同じ色にねこは1匹だけだよ。';
+      return { text: '❌ ' + reason, highlights: [[r, c], [cause.r, cause.c]] };
+    }
+
+    const groups = computeGroupCandidates(eliminated);
+    const color = state.colorGrid[r][c];
+    const options = [
+      { list: groups.rowCands[r], label: `${r + 1}行目` },
+      { list: groups.colCands[c], label: `${c + 1}列目` },
+      { list: groups.colorCands[color], label: 'この色のエリア' },
+    ].filter(o => o.list.length > 0);
+
+    if (options.length === 0) {
+      return { text: '🤔 行・列・色のルールから、もう一度候補を見比べてみよう。', highlights: [[r, c]] };
+    }
+    options.sort((a, b) => a.list.length - b.list.length);
+    const best = options[0];
+
+    if (best.list.length === 1) {
+      return {
+        text: `✅ ${best.label}の中で、まだ置ける可能性があるマスはここだけだよ！自信を持って置いてみよう。`,
+        highlights: best.list,
+      };
+    }
+    return {
+      text: `💭 ${best.label}には、まだ${best.list.length}個の候補が残っているよ。他の行・列・色を先に絞り込むと、ここが確定するかも。`,
+      highlights: best.list,
+    };
+  }
+
+  function useHintAt(r, c) {
+    if (hintTokens <= 0) {
+      showHintOutOfTokens();
+      return;
+    }
+    const hint = getHint(r, c);
+    hintTokens--;
+    saveHints();
+    updateHud();
+    showHintPanel(hint.text);
+    flashHintHighlights(hint.highlights);
+    state.hintMode = false;
+    updateHintModeUI();
+  }
+
+  function flashHintHighlights(cells) {
+    cells.forEach(([r, c]) => state.cellEls[r][c].classList.add('cq-hint-ring'));
+    setTimeout(() => {
+      cells.forEach(([r, c]) => state.cellEls[r][c] && state.cellEls[r][c].classList.remove('cq-hint-ring'));
+    }, 2600);
+  }
+
+  function showHintPanel(text) {
+    hintPanelText.textContent = text;
+    hintPanel.classList.remove('hidden');
+  }
+  function hideHintPanel() {
+    hintPanel.classList.add('hidden');
+  }
+  function showHintOutOfTokens() {
+    hintPanelText.textContent = '💡 ヒントがなくなったにゃ…ステージをクリアすると+1回復するよ。(広告を見て追加するのは近日対応予定)';
+    hintPanel.classList.remove('hidden');
+    state.hintMode = false;
+    updateHintModeUI();
+  }
+
+  function updateHintModeUI() {
+    hintBtn.classList.toggle('ring-4', state.hintMode);
+    hintBtn.classList.toggle('ring-yellow-300', state.hintMode);
+    boardWrapEl.classList.toggle('cq-hint-active', state.hintMode);
+  }
+
+  hintBtn.addEventListener('click', () => {
+    if (state.gameOver) return;
+    if (hintTokens <= 0) { showHintOutOfTokens(); return; }
+    state.hintMode = !state.hintMode;
+    hideHintPanel();
+    updateHintModeUI();
+  });
+
+  hintPanelCloseBtn.addEventListener('click', hideHintPanel);
+
   function handleCellClick(r, c) {
     if (state.gameOver) return;
+    if (state.hintMode) { useHintAt(r, c); return; }
     const cur = state.board[r][c];
     if (cur === 2) {
       state.board[r][c] = 0;
@@ -697,6 +889,7 @@
     stageLabelEl.textContent = `ステージ ${state.stageIndex + 1} / ${STAGE_SIZES.length}`;
     catCountLabelEl.textContent = `🐱 ${state.catCount} / ${state.size}`;
     livesLabelEl.textContent = '❤️'.repeat(Math.max(0, state.lives)) + '🤍'.repeat(state.maxLives - Math.max(0, state.lives));
+    hintCountLabel.textContent = hintTokens;
   }
 
   function showGameOver() {
@@ -713,8 +906,14 @@
 
   function onStageClear() {
     const isLast = state.stageIndex === STAGE_SIZES.length - 1;
+    const firstClear = !cleared[state.stageIndex];
     cleared[state.stageIndex] = true;
     saveCleared();
+    if (firstClear && hintTokens < HINT_MAX) {
+      hintTokens = Math.min(HINT_MAX, hintTokens + 1);
+      saveHints();
+      updateHud();
+    }
     sfx(isLast ? 'allclear' : 'clear');
     if (isLast) {
       clearTitle.textContent = '🎉 全ステージクリア!!';
@@ -739,6 +938,7 @@
 
   function renderStageSelect() {
     stageSelectGrid.innerHTML = '';
+    let currentBtn = null;
     STAGE_SIZES.forEach((n, i) => {
       const unlocked = i === 0 || cleared[i - 1] || cleared[i];
       const btn = document.createElement('button');
@@ -754,8 +954,10 @@
       } else {
         btn.disabled = true;
       }
+      if (isCurrent) currentBtn = btn;
       stageSelectGrid.appendChild(btn);
     });
+    if (currentBtn) currentBtn.scrollIntoView({ block: 'center' });
   }
 
   stageSelectBtn.addEventListener('click', () => {
