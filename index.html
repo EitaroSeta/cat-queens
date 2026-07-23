@@ -8,6 +8,7 @@
 <style>
   body { font-family: "Hiragino Maru Gothic ProN", "Yu Gothic", sans-serif; }
   #board { display: grid; background: #fbcfe8; border-radius: 0.75rem; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.12); touch-action: manipulation; }
+  #board.cq-cb-board { background: #9ca3af; }
   .cq-cell { box-sizing: border-box; line-height: 1; transition: background-color .15s; position: relative; }
   .cq-cell:active { filter: brightness(0.92); }
   @keyframes cqShake {
@@ -56,6 +57,7 @@
   <header class="w-full max-w-lg flex items-center justify-between pt-2">
     <h1 class="text-xl sm:text-2xl font-bold text-pink-600 flex items-center gap-1">🐱 ねこかくれんぼパズル</h1>
     <div class="flex gap-2">
+      <button id="cbModeBtn" title="色弱配慮モード(模様で区別)" class="text-xl px-2 py-1 rounded-lg bg-white/70 shadow hover:bg-white">🎨</button>
       <button id="stageSelectBtn" class="text-xl px-2 py-1 rounded-lg bg-white/70 shadow hover:bg-white">📋</button>
       <button id="muteBtn" class="text-xl px-2 py-1 rounded-lg bg-white/70 shadow hover:bg-white">🔊</button>
     </div>
@@ -104,6 +106,7 @@
       <li>クリックで「空欄 → ✕(いないメモ) → ねこ」の順に切り替わります</li>
       <li>間違った場所にねこを置くとライフが1減ります。ライフが0になるとゲームオーバー(そのステージを新しい盤面でリトライ)。後半のステージほどライフが少なくなります</li>
       <li>クリア済みのステージは📋ボタンからいつでも自由にリトライできます</li>
+      <li>🎨ボタンで、色の代わりに模様(縞の向き)とグレーの濃淡で領域を見分ける表示に切り替えられます</li>
       <li>💡ヒントボタンを押してからマスをタップすると、そのマスに置ける/置けない理由を教えてくれます。ヒントは所持数制(ステージクリアで+1回復)です</li>
     </ul>
   </div>
@@ -152,11 +155,20 @@
     if (index < 50) return 2;
     return 1;
   }
-  const PALETTE = ['#f87171','#fb923c','#fbbf24','#facc15','#a3e635','#34d399','#22d3ee','#60a5fa','#a78bfa','#f472b6'];
+  // 領域の大きさをどれだけ均等化するか(大きいほど1〜2マスの「一発で確定する」領域が出にくくなる)
+  function getRegionPower(index) {
+    if (index < RAMP_SIZES.length) return 0.5;
+    if (index < 20) return 1;
+    if (index < 50) return 1.5;
+    return 2;
+  }
+  // 色相環でなるべく均等に離すことで隣接領域を見分けやすくした配色(黄系統の密集を解消)
+  const PALETTE = ['#f87171','#f59e0b','#84cc16','#22c55e','#14b8a6','#06b6d4','#3b82f6','#8b5cf6','#d946ef','#f43f5e'];
   const STORAGE_STAGE = 'catqueens_stage';
   const STORAGE_MUTE = 'catqueens_muted';
   const STORAGE_CLEARED = 'catqueens_cleared';
   const STORAGE_HINTS = 'catqueens_hints';
+  const STORAGE_CB = 'catqueens_colorblind';
   const MAX_LIVES = 3;
   const CELL_GAP = 4;
   const HINT_START = 5;
@@ -179,6 +191,7 @@
     hintMode: false,
   };
   let muted = localStorage.getItem(STORAGE_MUTE) === '1';
+  let colorblindMode = localStorage.getItem(STORAGE_CB) === '1';
   let cleared = loadCleared();
   let hintTokens = loadHints();
 
@@ -213,6 +226,7 @@
   const livesLabelEl = document.getElementById('livesLabel');
   const resetBtn = document.getElementById('resetBtn');
   const muteBtn = document.getElementById('muteBtn');
+  const cbModeBtn = document.getElementById('cbModeBtn');
   const clearOverlay = document.getElementById('clearOverlay');
   const clearTitle = document.getElementById('clearTitle');
   const clearDesc = document.getElementById('clearDesc');
@@ -267,10 +281,12 @@
     return backtrack(0) ? perm : null;
   }
 
-  // 正解のねこマスを種にして、ランダムな連結領域(色)を盤面全体に広げる
-  function growRegions(n, perm) {
+  // 正解のねこマスを種にして、連結領域(色)を盤面全体に広げる。
+  // power=0で完全ランダム、大きいほど「今小さい領域」が優先的に選ばれ、1〜2マスの極小領域が出にくくなる。
+  function growRegions(n, perm, power) {
     const colorOf = Array.from({ length: n }, () => new Array(n).fill(-1));
     const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    const sizes = new Array(n).fill(1);
     let frontier = [];
     for (let region = 0; region < n; region++) {
       const r = region, c = perm[region];
@@ -282,11 +298,24 @@
     }
     let unassigned = n * n - n;
     while (unassigned > 0 && frontier.length > 0) {
-      const idx = Math.floor(Math.random() * frontier.length);
+      let idx;
+      if (power > 0) {
+        const weights = frontier.map(f => 1 / Math.pow(sizes[f.region], power));
+        const total = weights.reduce((a, b) => a + b, 0);
+        let rnd = Math.random() * total;
+        idx = weights.length - 1;
+        for (let i = 0; i < weights.length; i++) {
+          rnd -= weights[i];
+          if (rnd <= 0) { idx = i; break; }
+        }
+      } else {
+        idx = Math.floor(Math.random() * frontier.length);
+      }
       const { region, r, c } = frontier[idx];
       frontier.splice(idx, 1);
       if (colorOf[r][c] !== -1) continue;
       colorOf[r][c] = region;
+      sizes[region]++;
       unassigned--;
       for (const [dr, dc] of dirs) {
         const nr = r + dr, nc = c + dc;
@@ -378,18 +407,18 @@
     return false;
   }
 
-  function generatePuzzle(n) {
+  function generatePuzzle(n, power) {
     for (let attempt = 0; attempt < 60; attempt++) {
       const perm = randomPermutation(n);
       if (!perm) continue;
       for (let g = 0; g < 6; g++) {
-        const colorGrid = growRegions(n, perm);
+        const colorGrid = growRegions(n, perm, power);
         if (repairToUnique(n, colorGrid, perm, 100)) return { colorGrid };
       }
     }
     // 極めて稀なフォールバック(唯一解の保証なし)
     const perm = randomPermutation(n);
-    return { colorGrid: growRegions(n, perm) };
+    return { colorGrid: growRegions(n, perm, power) };
   }
 
   // ═══════════════════════════════
@@ -597,7 +626,7 @@
     boardEl.appendChild(loading);
     // 生成前に「生成中」表示を描画させてから重い処理に入る
     setTimeout(() => {
-      const puzzle = generatePuzzle(n);
+      const puzzle = generatePuzzle(n, getRegionPower(index));
       state.colorGrid = puzzle.colorGrid;
       state.colors = shuffle(PALETTE).slice(0, n);
       state.board = Array.from({ length: n }, () => new Array(n).fill(0));
@@ -622,6 +651,7 @@
     boardEl.innerHTML = '';
     boardEl.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
     boardEl.style.gap = `${CELL_GAP}px`;
+    boardEl.classList.toggle('cq-cb-board', colorblindMode);
     state.sizes = computeSizes(n);
     state.cellEls = Array.from({ length: n }, () => new Array(n));
     for (let r = 0; r < n; r++) {
@@ -629,7 +659,7 @@
         const cell = document.createElement('div');
         cell.className = 'cq-cell flex items-center justify-center select-none cursor-pointer';
         const region = state.colorGrid[r][c];
-        cell.style.background = state.colors[region];
+        applyCellBackground(cell, region);
         cell.style.aspectRatio = '1 / 1';
         cell.style.borderRadius = `${state.sizes.radiusPx}px`;
         cell.addEventListener('click', () => handleCellClick(r, c));
@@ -638,6 +668,29 @@
       }
     }
     renderAllCells();
+  }
+
+  // 色弱配慮モードでは、色相ではなくグレースケール明度+縞模様の向きで領域を区別する
+  const CB_GRAYS = ['#f3f4f6','#e5e7eb','#d1d5db','#9ca3af','#6b7280','#4b5563','#374151','#1f2937','#111827','#030712'];
+  function applyCellBackground(cell, region) {
+    if (colorblindMode) {
+      const gray = CB_GRAYS[region % CB_GRAYS.length];
+      const angle = (region % 4) * 45;
+      cell.style.backgroundColor = gray;
+      cell.style.backgroundImage = `repeating-linear-gradient(${angle}deg, rgba(255,255,255,0.35) 0 3px, rgba(0,0,0,0.18) 3px 6px)`;
+    } else {
+      cell.style.backgroundColor = state.colors[region];
+      cell.style.backgroundImage = 'none';
+    }
+  }
+
+  function refreshBoardBackgrounds() {
+    if (!state.cellEls) return;
+    boardEl.classList.toggle('cq-cb-board', colorblindMode);
+    const n = state.size;
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) applyCellBackground(state.cellEls[r][c], state.colorGrid[r][c]);
+    }
   }
 
   function renderAllCells() {
@@ -984,10 +1037,22 @@
     BGM.setMute(muted);
   });
 
+  cbModeBtn.addEventListener('click', () => {
+    colorblindMode = !colorblindMode;
+    localStorage.setItem(STORAGE_CB, colorblindMode ? '1' : '0');
+    cbModeBtn.textContent = colorblindMode ? '◐' : '🎨';
+    cbModeBtn.classList.toggle('ring-2', colorblindMode);
+    cbModeBtn.classList.toggle('ring-gray-400', colorblindMode);
+    refreshBoardBackgrounds();
+  });
+
   startBtn.addEventListener('click', () => {
     ac();
     startOverlay.remove();
     muteBtn.textContent = muted ? '🔇' : '🔊';
+    cbModeBtn.textContent = colorblindMode ? '◐' : '🎨';
+    cbModeBtn.classList.toggle('ring-2', colorblindMode);
+    cbModeBtn.classList.toggle('ring-gray-400', colorblindMode);
     if (!muted) BGM.start();
     const saved = parseInt(localStorage.getItem(STORAGE_STAGE), 10);
     const startIndex = Number.isInteger(saved) && saved >= 0 && saved < STAGE_SIZES.length ? saved : 0;
