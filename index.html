@@ -50,7 +50,7 @@
   .cq-hint-active #board { box-shadow: 0 0 0 4px #fde047, 0 10px 25px rgba(0,0,0,0.12); }
 </style>
 </head>
-<body class="min-h-screen bg-gradient-to-br from-orange-50 via-pink-50 to-yellow-50 text-gray-800">
+<body class="min-h-screen bg-gradient-to-br from-orange-200 via-pink-200 to-yellow-200 text-gray-800">
 
 <div id="app" class="min-h-screen flex flex-col items-center gap-4 p-4">
 
@@ -84,9 +84,9 @@
       </div>
     </div>
     <div id="gameOverOverlay" class="hidden absolute inset-0 rounded-xl bg-black/50 flex items-center justify-center">
-      <div class="cq-fadein bg-white rounded-xl p-6 text-center shadow-xl mx-4">
-        <p class="text-2xl font-bold text-red-500 mb-2">😿 ゲームオーバー</p>
-        <p class="text-sm text-gray-600 mb-4">3回間違えちゃったにゃ…新しい盤面でリトライしよう!</p>
+      <div class="cq-fadein bg-black rounded-xl p-6 text-center shadow-xl mx-4">
+        <p class="text-2xl font-bold text-red-400 mb-2">😿 ゲームオーバー</p>
+        <p class="text-sm text-gray-300 mb-4">3回間違えちゃったにゃ…新しい盤面でリトライしよう!</p>
         <button id="gameOverRetryBtn" class="px-5 py-2 rounded-lg bg-pink-500 text-white font-bold shadow hover:bg-pink-600">もう一度挑戦</button>
       </div>
     </div>
@@ -120,9 +120,9 @@
   </div>
 
   <div id="startOverlay" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-    <div class="cq-fadein bg-white rounded-xl p-6 max-w-sm text-center shadow-xl">
-      <p class="text-2xl font-bold text-pink-600 mb-2">🐱 ねこかくれんぼパズル</p>
-      <p class="text-sm text-gray-600 mb-4 leading-relaxed text-left">
+    <div class="cq-fadein bg-black rounded-xl p-6 max-w-sm text-center shadow-xl">
+      <p class="text-2xl font-bold text-pink-400 mb-2">🐱 ねこかくれんぼパズル</p>
+      <p class="text-sm text-gray-300 mb-4 leading-relaxed text-left">
         碁盤の目に色分けされたマスがあり、それぞれの色の中に1匹だけねこが隠れています。<br><br>
         ・各行・各列に1匹<br>
         ・各色に1匹<br>
@@ -492,7 +492,10 @@
     659.25, 783.99, 880.00, 1046.50, 880.00, 783.99, 659.25, null,
   ];
   const BGM = {
-    nodes: [], master: null, beatTimer: null, beat: 0, bpm: 132, active: false,
+    nodes: [], master: null, schedulerTimer: null, beat: 0, bpm: 132, active: false,
+    nextNoteTime: 0,
+    lookaheadMs: 300,       // スケジューラーのポーリング間隔(ms)
+    scheduleAheadSec: 2.0,  // どれだけ先の音まで予約するか(秒)。パズル生成などのブロックより長く取る
     start() {
       this.stop();
       if (muted) return;
@@ -503,11 +506,22 @@
       this.master.gain.setValueAtTime(0, ctx.currentTime);
       this.master.gain.linearRampToValueAtTime(0.24, ctx.currentTime + 1.5);
       this.master.connect(ctx.destination);
-      this._tick();
+      this.nextNoteTime = ctx.currentTime + 0.05;
+      this._scheduler();
     },
     stop() {
       this.active = false;
-      if (this.beatTimer) { clearTimeout(this.beatTimer); this.beatTimer = null; }
+      if (this.schedulerTimer) { clearTimeout(this.schedulerTimer); this.schedulerTimer = null; }
+      // scheduleAheadSec分は先の音まで予約済みなので、参照を外すだけでなく
+      // マスターゲインを即ゼロにして物理的に鳴り止ませる
+      if (this.master) {
+        try {
+          const ctx = ac();
+          this.master.gain.cancelScheduledValues(ctx.currentTime);
+          this.master.gain.setValueAtTime(0, ctx.currentTime);
+          this.master.disconnect();
+        } catch (e) {}
+      }
       this.nodes.forEach(n => { try { n.stop(); } catch (e) {} });
       this.nodes = [];
       this.master = null;
@@ -516,25 +530,40 @@
       if (m) this.stop();
       else if (!this.active) this.start();
     },
-    _tick() {
+    // setTimeoutの発火自体はブラウザの混み具合でズレるため、実際の音の時刻は
+    // Web Audioの時計(nextNoteTime)を基準に前もって計算し、まとめて予約する。
+    // こうするとポーリングが多少遅れても音そのものはズレない。
+    _scheduler() {
       if (!this.active) return;
       const ctx = ac();
-      const t = ctx.currentTime;
       const beatSec = 60 / this.bpm;
+      // パズル生成などでメインスレッドが長時間ブロックされると nextNoteTime が
+      // 現在時刻より過去になり、溜まった音が一気に(重なって)鳴ってしまう。
+      // 過去に取り残されていたら、その分は諦めて現在時刻から鳴らし直す。
+      if (this.nextNoteTime < ctx.currentTime) {
+        this.nextNoteTime = ctx.currentTime + this.scheduleAheadSec;
+      }
+      while (this.nextNoteTime < ctx.currentTime + this.scheduleAheadSec) {
+        this._scheduleBeat(this.beat, this.nextNoteTime);
+        this.nextNoteTime += beatSec;
+        this.beat++;
+      }
+      this.schedulerTimer = setTimeout(() => this._scheduler(), this.lookaheadMs);
+    },
+    _scheduleBeat(beat, t) {
+      const ctx = ac();
       this._kick(ctx, t);
-      if (this.beat % 4 === 0) this._bass(ctx, t);
-      if (this.beat % 2 === 1) { this._hat(ctx, t); this._snap(ctx, t); }
+      if (beat % 4 === 0) this._bass(ctx, t, beat);
+      if (beat % 2 === 1) { this._hat(ctx, t); this._snap(ctx, t); }
       const chordProg = [
         [261.63, 329.63, 392.00],
         [392.00, 493.88, 587.33],
         [220.00, 261.63, 329.63],
         [349.23, 440.00, 523.25],
       ];
-      if (this.beat % 4 === 0) this._chord(ctx, t, chordProg[Math.floor(this.beat / 4) % 4]);
-      const note = LEAD_RIFF[this.beat % LEAD_RIFF.length];
+      if (beat % 4 === 0) this._chord(ctx, t, chordProg[Math.floor(beat / 4) % 4]);
+      const note = LEAD_RIFF[beat % LEAD_RIFF.length];
       if (note) this._lead(ctx, t, note);
-      this.beat++;
-      this.beatTimer = setTimeout(() => this._tick(), beatSec * 1000);
     },
     _kick(ctx, t) {
       if (!this.master) return;
@@ -547,10 +576,10 @@
       o.connect(g); g.connect(this.master);
       o.start(t); o.stop(t + 0.17);
     },
-    _bass(ctx, t) {
+    _bass(ctx, t, beat) {
       if (!this.master) return;
       const bassNotes = [130.81, 196.00, 110.00, 174.61];
-      const f = bassNotes[Math.floor(this.beat / 4) % 4];
+      const f = bassNotes[Math.floor(beat / 4) % 4];
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.type = 'triangle'; o.frequency.value = f;
       g.gain.setValueAtTime(0.14, t);
@@ -641,7 +670,7 @@
     const boardWidthPx = boardWrapEl.clientWidth;
     const cellPx = (boardWidthPx - CELL_GAP * (n - 1)) / n;
     const catPx = Math.max(14, cellPx * 0.52);
-    const markPx = Math.max(10, cellPx * 0.3);
+    const markPx = Math.max(20, cellPx * 0.6);
     const radiusPx = Math.max(4, cellPx * 0.12);
     return { cellPx, catPx, markPx, radiusPx };
   }
